@@ -1,3 +1,0 @@
-spring:
-  application.name: chat
-  main.web-application-type: reactive
