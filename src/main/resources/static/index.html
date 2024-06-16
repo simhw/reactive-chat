@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hello WebSocket</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css"
+          integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+    <script>
+        let stompClient = null;
+        let subscriptions = {};  // 채팅 목록
+
+        function setConnected(connected) {
+            document.getElementById("connect").disabled = connected;
+            document.getElementById("disconnect").disabled = !connected;
+            document.getElementById("conversation").style.display = connected ? "block" : "none";
+            document.getElementById("messages").innerHTML = "";
+        }
+
+        function connect() {
+            const socket = new SockJS('/web-socket');
+            stompClient = Stomp.over(socket);
+
+            stompClient.connect({}, (frame) => {
+                setConnected(true);
+                console.log('Connected: ' + frame);
+                loadChatRooms();  // Load chat rooms once connected
+            }, (error) => {
+                console.error('Error with websocket', error);
+            });
+        }
+
+        function disconnect() {
+            console.log("disconnect()");
+
+            if (stompClient !== null) {
+                for (let chat in subscriptions) {
+                    if (subscriptions.hasOwnProperty(chat)) {
+                        subscriptions[chat].unsubscribe();
+                    }
+                }
+                stompClient.disconnect();
+            }
+            setConnected(false);
+            subscriptions = {};
+            console.log("Disconnected");
+        }
+
+        function loadChatRooms() {
+            const chats = ['chat/1', 'chat/2', 'chat/3'];
+            const chatRoomList = document.getElementById("chat-rooms");
+
+            chats.forEach(chat => {
+                const li = document.createElement("li");
+                li.appendChild(document.createTextNode(chat));
+                li.onclick = () => subscribeChat(chat);
+                chatRoomList.appendChild(li);
+            });
+        }
+
+        function subscribeChat(chat) {
+            if (subscriptions[chat]) {
+                return;
+            }
+
+            let subscription = stompClient.subscribe('/topic/' + chat, (message) => {
+                showMessage(JSON.parse(message.body).content);
+            });
+
+            subscriptions[chat] = subscription;
+            console.log("Subscribed to: " + chat);
+        }
+
+        function unsubscribeChat(chat) {
+            if (subscriptions[chat]) {
+                subscriptions[chat].unsubscribe();
+                delete subscriptions[chat];
+                console.log("Unsubscribed from: " + chat);
+            }
+        }
+
+        function sendMessage() {
+            const message = document.getElementById("message").value;
+            console.log("sendMessage()");
+
+            for (let chat in subscriptions) {
+                if (subscriptions.hasOwnProperty(chat)) {
+                    stompClient.send('/app/' + chat, {}, JSON.stringify({content: message}));
+                    console.log("Message sent to: " + chat);
+                }
+            }
+        }
+
+        function showMessage(message) {
+            const messages = document.getElementById("messages");
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.appendChild(document.createTextNode(message));
+            row.appendChild(cell);
+            messages.appendChild(row);
+        }
+
+        window.onload = function () {
+            document.getElementById("connect").onclick = (event) => {
+                event.preventDefault();
+                connect();
+            };
+            document.getElementById("disconnect").onclick = (event) => {
+                event.preventDefault();
+                disconnect();
+            };
+            document.getElementById("send").onclick = (event) => {
+                event.preventDefault();
+                sendMessage();
+            };
+        };
+    </script>
+</head>
+<body>
+<div id="main-content" class="container">
+    <div class="container">
+        <form class="form-inline">
+            <div class="form-group">
+                <label for="connect">WebSocket connection:</label>
+                <button id="connect" class="btn btn-default" type="button">Connect</button>
+                <button id="disconnect" class="btn btn-default" type="button" disabled="disabled">Disconnect</button>
+                <input type="text" id="message" placeholder="Enter your message" class="form-control">
+                <button id="send" class="btn btn-default" type="button">Send</button>
+            </div>
+        </form>
+    </div>
+    <br>
+
+    <div class="container">
+        <ul id="chat-rooms"></ul>
+    </div>
+    <br>
+    <div id="conversation" style="display:none;">
+        <table class="table">
+            <thead>
+            <tr>
+                <th>Messages</th>
+            </tr>
+            </thead>
+            <tbody id="messages">
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>
