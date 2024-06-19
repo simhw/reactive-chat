@@ -1,20 +1,24 @@
 package com.example.chat;
 
-import com.example.chat.respository.WebSocketSessionRepository;
+import com.example.chat.domain.Message;
 import com.example.chat.service.RedisPubSubService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.reactivestreams.Publisher;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.io.IOException;
 import java.time.Duration;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+
+import static org.springframework.web.reactive.socket.WebSocketMessage.Type.TEXT;
 
 @Slf4j
 @Component
@@ -25,55 +29,20 @@ public class ReactiveWebSocketHandler implements WebSocketHandler {
     private static final byte[] PING_PAYLOAD = new byte[0];
 
     private final RedisPubSubService pubSubService;
-    private final WebSocketSessionRepository sessionRepository;
 
     @Override
-    public Mono<Void> handle(WebSocketSession session) {
-        sessionRepository.save(session);
-
-        WebSocketMessage sessionIdMessage = session.textMessage("{\"sessionId\":\"" + session.getId() + "\"}");
-        Mono<Void> sessionId = session.send(Mono.just(sessionIdMessage));
-
+    public Mono<Void> handle(WebSocketSession socketSession) {
         Flux<WebSocketMessage> pingSource = Flux.interval(PING_INTERVAL)
-                .map(i -> session.pingMessage(factory -> factory.wrap(PING_PAYLOAD)));
+                .map(i -> socketSession.pingMessage(factory -> factory.wrap(PING_PAYLOAD)));
 
-        Mono<Void> input = session.receive()
-                .filter(message -> message.getType() == WebSocketMessage.Type.TEXT)
-                .concatMap(pubSubService::publishMessage)
-                .then();
+        // send messages to client
+        Flux<WebSocketMessage> output = socketSession.receive()
+                .filter(socketMessage -> socketMessage.getType() == TEXT)
+                .flatMap(pubSubService::processMessage)
+                .flatMap(message -> pubSubService.subscribeMessage(message.getChatId()))
+                .map(socketSession::textMessage)
+                .doOnError(e -> log.error("Error processing output message", e));
 
-        Flux<WebSocketMessage> output = Flux.defer(() -> {
-            Set<String> chatIds = sessionRepository.getChatIds(session);
-
-            return Flux.fromIterable(chatIds)
-                    .flatMap(pubSubService::subscribeMessage)
-                    .map(message -> {
-                        try {
-                            return session.textMessage(message);
-                        } catch (Exception e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
-        });
-
-        return sessionId.then(session.send(output)).and(input)
-                .doFinally(signalType -> {
-                    sessionRepository.remove(session.getId());
-                });
-
-        /**
-         Flux<WebSocketMessage> messageSource = session.receive()
-            .map(value -> session.textMessage("Echo " + value.getPayloadAsText()));
-         Mono<Void> output = session.send(Flux.merge(source, pingSource));
-
-         return Mono.zip(output, input).then();
-         */
+        return socketSession.send(Flux.merge(output, pingSource));
     }
-
-    /**
-    private void broadcast(String message) {
-        sessions.values()
-                .forEach(session -> session.send(Mono.just(session.textMessage(message))).subscribe());
-    }
-     */
 }

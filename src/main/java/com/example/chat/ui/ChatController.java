@@ -6,9 +6,8 @@ import com.example.chat.respository.WebSocketSessionRepository;
 import com.example.chat.service.RedisPubSubService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.reactive.socket.WebSocketSession;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.UUID;
@@ -23,14 +22,21 @@ public class ChatController {
     private final RedisPubSubService pubSubService;
     private final WebSocketSessionRepository sessionRepository;
 
-    @PostMapping("")
-    public void createChat(@RequestBody Chat chat) {
-        chat.setId(UUID.randomUUID().toString());
-        pubSubService.subscribe(chat.getId());
+    @GetMapping("")
+    public Mono<Object> getChats() {
+        return pubSubService.getChannels();
     }
 
-    @GetMapping
-    public void subscribeChat(@RequestParam String chatId, @RequestParam String sessionId) {
-        pubSubService.subscribe(sessionId, chatId);
+    @PostMapping("")
+    public Mono<Boolean> createChat(@RequestBody Chat chat) {
+        chat.setId(UUID.randomUUID().toString());
+        Mono<Boolean> result = pubSubService.saveChannel(chat);
+        return Mono.just(result).hasElement();
+    }
+
+    @PostMapping("/message")
+    public Mono<Long> sendMessage(@RequestBody Message message) {
+        Mono<Long> result = pubSubService.publishMessage(message);
+        return result;
     }
 }
